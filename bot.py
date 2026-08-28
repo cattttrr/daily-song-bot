@@ -12,25 +12,25 @@ from discord.ext import commands, tasks
 
 
 # ============================================================
-# CONFIG
+# CONFIGURATION
 # ============================================================
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
 SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
 
-# Spotify country/market.
+# Spotify market.
 # Poland = PL
 SPOTIFY_MARKET = os.getenv("SPOTIFY_MARKET", "PL")
 
-# Railway Volume location.
+# Railway Volume mount path
 DATA_DIR = os.getenv("DATA_DIR", "/app/data")
 
 DATABASE_PATH = os.path.join(DATA_DIR, "bot.db")
 
 
 # ============================================================
-# VALIDATION
+# CHECK REQUIRED VARIABLES
 # ============================================================
 
 if not DISCORD_TOKEN:
@@ -164,10 +164,9 @@ initialize_database()
 
 def get_today():
     """
-    Returns today's date.
+    The bot uses UTC for its calendar day.
 
-    The bot uses UTC so the daily schedule remains consistent
-    regardless of where the Railway server is located.
+    This means a new day begins at 00:00 UTC.
     """
 
     return datetime.now(
@@ -176,7 +175,7 @@ def get_today():
 
 
 # ============================================================
-# SPOTIFY CLIENT
+# SPOTIFY
 # ============================================================
 
 class SpotifyClient:
@@ -185,13 +184,14 @@ class SpotifyClient:
         self.access_token = None
         self.expires_at = 0
 
+
     async def get_access_token(self):
 
         now = datetime.now(
             timezone.utc
         ).timestamp()
 
-        # Re-use the current token if it is still valid.
+        # Reuse token if still valid
         if (
             self.access_token
             and now < self.expires_at - 60
@@ -247,6 +247,7 @@ class SpotifyClient:
 
         return self.access_token
 
+
     async def search_tracks(
         self,
         query: str,
@@ -277,7 +278,7 @@ class SpotifyClient:
                 params=params
             ) as response:
 
-                # Token expired.
+                # Token expired
                 if response.status == 401:
 
                     self.access_token = None
@@ -313,7 +314,8 @@ class SpotifyClient:
 
                     raise RuntimeError(
                         "Spotify search failed: "
-                        f"{response.status} {text}"
+                        f"{response.status} "
+                        f"{text}"
                     )
 
                 return await response.json()
@@ -324,7 +326,7 @@ class SpotifyClient:
         previous_track_id=None
     ):
 
-        # Random search terms.
+        # Search terms used to produce random songs
         queries = [
             "a",
             "e",
@@ -350,8 +352,6 @@ class SpotifyClient:
 
         query = random.choice(queries)
 
-        # Get the first page so we can see how many
-        # results Spotify says are available.
         first_result = await self.search_tracks(
             query=query,
             offset=0
@@ -373,7 +373,7 @@ class SpotifyClient:
                 "Spotify returned no tracks."
             )
 
-        # Spotify limits search offsets.
+        # Spotify search offset limit
         maximum_offset = max(
             0,
             min(total - 1, 1000)
@@ -397,7 +397,7 @@ class SpotifyClient:
             []
         )
 
-        # Remove local tracks.
+        # Remove local tracks
         tracks = [
             track
             for track in tracks
@@ -407,7 +407,7 @@ class SpotifyClient:
             )
         ]
 
-        # Try not to repeat yesterday's song.
+        # Try not to pick yesterday's song
         if previous_track_id:
 
             different_tracks = [
@@ -433,7 +433,7 @@ spotify = SpotifyClient()
 
 
 # ============================================================
-# DISCORD EMBED
+# CREATE EMBED
 # ============================================================
 
 def create_song_embed(track):
@@ -544,16 +544,7 @@ async def send_song_to_guild(
 
     today = get_today()
 
-    # --------------------------------------------------------
-    # IMPORTANT:
-    #
-    # If today's song has already been sent,
-    # DO NOT send another one.
-    #
-    # This is what prevents duplicate songs after
-    # Railway restarts.
-    # --------------------------------------------------------
-
+    # Prevent duplicate daily songs
     if (
         not force
         and settings["last_sent_date"] == today
@@ -574,14 +565,12 @@ async def send_song_to_guild(
         )
 
         await channel.send(
-            content=(
-                "🎶 **Today's random song!**"
-            ),
+            content="🎶 **Today's random song!**",
             embed=embed
         )
 
-        # Only mark the song as sent AFTER Discord
-        # successfully accepted the message.
+        # Only record the date after the
+        # Discord message was successfully sent.
         mark_song_sent(
             guild_id=guild_id,
             sent_date=today,
@@ -638,17 +627,13 @@ async def daily_checker():
 
     today = get_today()
 
-    print(
-        f"[INFO] Daily check: {today}"
-    )
-
     for settings in settings_list:
 
         guild_id = settings[
             "guild_id"
         ]
 
-        # Already sent today's song.
+        # Already sent today
         if settings[
             "last_sent_date"
         ] == today:
@@ -668,7 +653,7 @@ async def daily_checker():
                 f"for guild {guild_id}: {error}"
             )
 
-        # Small delay between servers.
+        # Prevent hitting APIs too quickly
         await asyncio.sleep(1)
 
 
@@ -694,9 +679,7 @@ bot = commands.Bot(
 # SETUP VIEW
 # ============================================================
 
-class SetupView(
-    discord.ui.View
-):
+class SetupView(discord.ui.View):
 
     def __init__(
         self,
@@ -734,10 +717,17 @@ class SetupView(
         return True
 
 
-    @discord.ui.ChannelSelect(
-        placeholder=(
-            "Choose the daily song channel..."
-        ),
+    # ========================================================
+    # CHANNEL SELECT
+    #
+    # IMPORTANT:
+    # discord.py uses @discord.ui.select()
+    # with cls=discord.ui.ChannelSelect.
+    # ========================================================
+
+    @discord.ui.select(
+        cls=discord.ui.ChannelSelect,
+        placeholder="Choose the daily song channel...",
         channel_types=[
             discord.ChannelType.text
         ],
@@ -763,7 +753,11 @@ class SetupView(
         )
 
 
-    @discord.ui.Button(
+    # ========================================================
+    # SAVE BUTTON
+    # ========================================================
+
+    @discord.ui.button(
         label="Save Setup",
         style=discord.ButtonStyle.success,
         emoji="💾"
@@ -871,7 +865,11 @@ class SetupView(
         self.stop()
 
 
-    @discord.ui.Button(
+    # ========================================================
+    # CANCEL BUTTON
+    # ========================================================
+
+    @discord.ui.button(
         label="Cancel",
         style=discord.ButtonStyle.danger,
         emoji="❌"
@@ -892,7 +890,7 @@ class SetupView(
 
 
 # ============================================================
-# /setup
+# /SETUP
 # ============================================================
 
 @bot.tree.command(
@@ -968,7 +966,7 @@ async def setup(
 
 
 # ============================================================
-# /test
+# /TEST
 # ============================================================
 
 @bot.tree.command(
@@ -1058,7 +1056,7 @@ async def test(
 
 
 # ============================================================
-# /status
+# /STATUS
 # ============================================================
 
 @bot.tree.command(
@@ -1135,7 +1133,7 @@ async def status(
 
 
 # ============================================================
-# /disable
+# /DISABLE
 # ============================================================
 
 @bot.tree.command(
@@ -1246,7 +1244,7 @@ async def on_ready():
 
 
 # ============================================================
-# COMMAND ERROR HANDLING
+# ERROR HANDLING
 # ============================================================
 
 @setup.error
@@ -1328,7 +1326,7 @@ async def disable_error(
 
 
 # ============================================================
-# START BOT
+# START
 # ============================================================
 
 bot.run(DISCORD_TOKEN)
