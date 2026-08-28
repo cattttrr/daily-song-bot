@@ -12,26 +12,18 @@ from discord.ext import commands, tasks
 
 
 # ============================================================
-# CONFIGURATION
+# CONFIG
 # ============================================================
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
 SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
 
-# Spotify market.
-# Poland = PL
 SPOTIFY_MARKET = os.getenv("SPOTIFY_MARKET", "PL")
 
-# Railway Volume mount path
 DATA_DIR = os.getenv("DATA_DIR", "/app/data")
-
 DATABASE_PATH = os.path.join(DATA_DIR, "bot.db")
 
-
-# ============================================================
-# CHECK REQUIRED VARIABLES
-# ============================================================
 
 if not DISCORD_TOKEN:
     raise RuntimeError("Missing DISCORD_TOKEN")
@@ -43,12 +35,12 @@ if not SPOTIFY_CLIENT_SECRET:
     raise RuntimeError("Missing SPOTIFY_CLIENT_SECRET")
 
 
+os.makedirs(DATA_DIR, exist_ok=True)
+
+
 # ============================================================
 # DATABASE
 # ============================================================
-
-os.makedirs(DATA_DIR, exist_ok=True)
-
 
 def get_db():
     db = sqlite3.connect(DATABASE_PATH)
@@ -58,65 +50,44 @@ def get_db():
 
 def initialize_database():
     with get_db() as db:
-        db.execute(
-            """
+        db.execute("""
             CREATE TABLE IF NOT EXISTS guild_settings (
                 guild_id INTEGER PRIMARY KEY,
                 channel_id INTEGER NOT NULL,
                 last_sent_date TEXT,
                 last_track_id TEXT
             )
-            """
-        )
-
+        """)
         db.commit()
 
 
 def set_guild_channel(guild_id: int, channel_id: int):
     with get_db() as db:
-        db.execute(
-            """
-            INSERT INTO guild_settings (
-                guild_id,
-                channel_id,
-                last_sent_date,
-                last_track_id
-            )
+        db.execute("""
+            INSERT INTO guild_settings
+                (guild_id, channel_id, last_sent_date, last_track_id)
             VALUES (?, ?, NULL, NULL)
-
-            ON CONFLICT(guild_id)
-            DO UPDATE SET channel_id = excluded.channel_id
-            """,
-            (guild_id, channel_id)
-        )
-
+            ON CONFLICT(guild_id) DO UPDATE SET
+                channel_id = excluded.channel_id
+        """, (guild_id, channel_id))
         db.commit()
 
 
 def get_guild_settings(guild_id: int):
     with get_db() as db:
-        row = db.execute(
-            """
+        return db.execute("""
             SELECT *
             FROM guild_settings
             WHERE guild_id = ?
-            """,
-            (guild_id,)
-        ).fetchone()
-
-    return row
+        """, (guild_id,)).fetchone()
 
 
 def get_all_guild_settings():
     with get_db() as db:
-        rows = db.execute(
-            """
+        return db.execute("""
             SELECT *
             FROM guild_settings
-            """
-        ).fetchall()
-
-    return rows
+        """).fetchall()
 
 
 def mark_song_sent(
@@ -125,33 +96,25 @@ def mark_song_sent(
     track_id: str
 ):
     with get_db() as db:
-        db.execute(
-            """
+        db.execute("""
             UPDATE guild_settings
             SET last_sent_date = ?,
                 last_track_id = ?
             WHERE guild_id = ?
-            """,
-            (
-                sent_date,
-                track_id,
-                guild_id
-            )
-        )
-
+        """, (
+            sent_date,
+            track_id,
+            guild_id
+        ))
         db.commit()
 
 
 def remove_guild(guild_id: int):
     with get_db() as db:
-        db.execute(
-            """
+        db.execute("""
             DELETE FROM guild_settings
             WHERE guild_id = ?
-            """,
-            (guild_id,)
-        )
-
+        """, (guild_id,))
         db.commit()
 
 
@@ -163,12 +126,7 @@ initialize_database()
 # ============================================================
 
 def get_today():
-    """
-    The bot uses UTC for its calendar day.
-
-    This means a new day begins at 00:00 UTC.
-    """
-
+    # The calendar day is based on UTC.
     return datetime.now(
         timezone.utc
     ).strftime("%Y-%m-%d")
@@ -191,7 +149,6 @@ class SpotifyClient:
             timezone.utc
         ).timestamp()
 
-        # Reuse token if still valid
         if (
             self.access_token
             and now < self.expires_at - 60
@@ -203,21 +160,15 @@ class SpotifyClient:
             f"{SPOTIFY_CLIENT_SECRET}"
         )
 
-        encoded_credentials = base64.b64encode(
+        encoded = base64.b64encode(
             credentials.encode("utf-8")
         ).decode("utf-8")
 
         headers = {
-            "Authorization": (
-                f"Basic {encoded_credentials}"
-            ),
+            "Authorization": f"Basic {encoded}",
             "Content-Type": (
                 "application/x-www-form-urlencoded"
             )
-        }
-
-        data = {
-            "grant_type": "client_credentials"
         }
 
         async with aiohttp.ClientSession() as session:
@@ -225,7 +176,9 @@ class SpotifyClient:
             async with session.post(
                 "https://accounts.spotify.com/api/token",
                 headers=headers,
-                data=data
+                data={
+                    "grant_type": "client_credentials"
+                }
             ) as response:
 
                 if response.status != 200:
@@ -278,7 +231,6 @@ class SpotifyClient:
                 params=params
             ) as response:
 
-                # Token expired
                 if response.status == 401:
 
                     self.access_token = None
@@ -294,19 +246,18 @@ class SpotifyClient:
                         "https://api.spotify.com/v1/search",
                         headers=headers,
                         params=params
-                    ) as retry_response:
+                    ) as retry:
 
-                        if retry_response.status != 200:
+                        if retry.status != 200:
 
-                            text = await retry_response.text()
+                            text = await retry.text()
 
                             raise RuntimeError(
                                 "Spotify search failed: "
-                                f"{retry_response.status} "
-                                f"{text}"
+                                f"{retry.status} {text}"
                             )
 
-                        return await retry_response.json()
+                        return await retry.json()
 
                 if response.status != 200:
 
@@ -314,8 +265,7 @@ class SpotifyClient:
 
                     raise RuntimeError(
                         "Spotify search failed: "
-                        f"{response.status} "
-                        f"{text}"
+                        f"{response.status} {text}"
                     )
 
                 return await response.json()
@@ -326,7 +276,6 @@ class SpotifyClient:
         previous_track_id=None
     ):
 
-        # Search terms used to produce random songs
         queries = [
             "a",
             "e",
@@ -352,17 +301,17 @@ class SpotifyClient:
 
         query = random.choice(queries)
 
-        first_result = await self.search_tracks(
-            query=query,
-            offset=0
+        first = await self.search_tracks(
+            query,
+            0
         )
 
-        track_data = first_result.get(
+        tracks_info = first.get(
             "tracks",
             {}
         )
 
-        total = track_data.get(
+        total = tracks_info.get(
             "total",
             0
         )
@@ -373,20 +322,19 @@ class SpotifyClient:
                 "Spotify returned no tracks."
             )
 
-        # Spotify search offset limit
-        maximum_offset = max(
-            0,
-            min(total - 1, 1000)
+        max_offset = min(
+            total - 1,
+            1000
         )
 
         offset = random.randint(
             0,
-            maximum_offset
+            max_offset
         )
 
         result = await self.search_tracks(
-            query=query,
-            offset=offset
+            query,
+            offset
         )
 
         tracks = result.get(
@@ -397,7 +345,6 @@ class SpotifyClient:
             []
         )
 
-        # Remove local tracks
         tracks = [
             track
             for track in tracks
@@ -405,20 +352,19 @@ class SpotifyClient:
                 "is_local",
                 False
             )
+            and track.get("id")
         ]
 
-        # Try not to pick yesterday's song
         if previous_track_id:
 
-            different_tracks = [
+            different = [
                 track
                 for track in tracks
-                if track.get("id")
-                != previous_track_id
+                if track["id"] != previous_track_id
             ]
 
-            if different_tracks:
-                tracks = different_tracks
+            if different:
+                tracks = different
 
         if not tracks:
 
@@ -433,27 +379,37 @@ spotify = SpotifyClient()
 
 
 # ============================================================
-# CREATE EMBED
+# DISCORD BOT
+# ============================================================
+
+intents = discord.Intents.default()
+
+bot = commands.Bot(
+    command_prefix="!",
+    intents=intents
+)
+
+
+# ============================================================
+# SONG EMBED
 # ============================================================
 
 def create_song_embed(track):
 
-    track_name = track.get(
+    name = track.get(
         "name",
         "Unknown song"
     )
 
-    artists = track.get(
-        "artists",
-        []
-    )
-
-    artist_names = ", ".join(
+    artists = ", ".join(
         artist.get(
             "name",
             "Unknown artist"
         )
-        for artist in artists
+        for artist in track.get(
+            "artists",
+            []
+        )
     )
 
     album = track.get(
@@ -468,15 +424,20 @@ def create_song_embed(track):
 
     spotify_url = (
         track
-        .get("external_urls", {})
-        .get("spotify")
+        .get(
+            "external_urls",
+            {}
+        )
+        .get(
+            "spotify"
+        )
     )
 
     embed = discord.Embed(
         title="🎵 Song of the Day",
         description=(
-            f"## {track_name}\n"
-            f"**{artist_names}**\n\n"
+            f"## {name}\n"
+            f"**{artists}**\n\n"
             f"💿 Album: **{album_name}**\n\n"
             f"🎧 [Listen on Spotify]"
             f"({spotify_url})"
@@ -544,7 +505,7 @@ async def send_song_to_guild(
 
     today = get_today()
 
-    # Prevent duplicate daily songs
+    # Don't send more than one automatic song per day.
     if (
         not force
         and settings["last_sent_date"] == today
@@ -555,9 +516,7 @@ async def send_song_to_guild(
     try:
 
         track = await spotify.get_random_song(
-            previous_track_id=settings[
-                "last_track_id"
-            ]
+            settings["last_track_id"]
         )
 
         embed = create_song_embed(
@@ -569,12 +528,12 @@ async def send_song_to_guild(
             embed=embed
         )
 
-        # Only record the date after the
-        # Discord message was successfully sent.
+        # Only save the date after Discord
+        # successfully accepted the message.
         mark_song_sent(
-            guild_id=guild_id,
-            sent_date=today,
-            track_id=track["id"]
+            guild_id,
+            today,
+            track["id"]
         )
 
         print(
@@ -588,11 +547,9 @@ async def send_song_to_guild(
     except discord.Forbidden:
 
         print(
-            f"[ERROR] I don't have permission to send "
-            f"messages in channel {channel_id}"
+            f"[ERROR] Missing permission to send "
+            f"in channel {channel_id}"
         )
-
-        return False
 
     except discord.HTTPException as error:
 
@@ -601,8 +558,6 @@ async def send_song_to_guild(
             f"{guild_id}: {error}"
         )
 
-        return False
-
     except Exception as error:
 
         print(
@@ -610,7 +565,7 @@ async def send_song_to_guild(
             f"{guild_id}: {error}"
         )
 
-        return False
+    return False
 
 
 # ============================================================
@@ -625,35 +580,30 @@ async def daily_checker():
     if not settings_list:
         return
 
-    today = get_today()
-
     for settings in settings_list:
 
         guild_id = settings[
             "guild_id"
         ]
 
-        # Already sent today
-        if settings[
-            "last_sent_date"
-        ] == today:
-
+        if (
+            settings["last_sent_date"]
+            == get_today()
+        ):
             continue
 
         try:
 
             await send_song_to_guild(
-                guild_id=guild_id
+                guild_id
             )
 
         except Exception as error:
 
             print(
-                f"[ERROR] Daily checker failed "
-                f"for guild {guild_id}: {error}"
+                f"[ERROR] Daily checker: {error}"
             )
 
-        # Prevent hitting APIs too quickly
         await asyncio.sleep(1)
 
 
@@ -661,18 +611,6 @@ async def daily_checker():
 async def before_daily_checker():
 
     await bot.wait_until_ready()
-
-
-# ============================================================
-# DISCORD BOT
-# ============================================================
-
-intents = discord.Intents.default()
-
-bot = commands.Bot(
-    command_prefix="!",
-    intents=intents
-)
 
 
 # ============================================================
@@ -692,6 +630,26 @@ class SetupView(discord.ui.View):
 
         self.author_id = author_id
         self.selected_channel = None
+
+        # Create the channel selector directly.
+        self.channel_select = discord.ui.ChannelSelect(
+            placeholder=(
+                "Choose the daily song channel..."
+            ),
+            channel_types=[
+                discord.ChannelType.text
+            ],
+            min_values=1,
+            max_values=1
+        )
+
+        self.channel_select.callback = (
+            self.channel_selected
+        )
+
+        self.add_item(
+            self.channel_select
+        )
 
 
     async def interaction_check(
@@ -717,45 +675,42 @@ class SetupView(discord.ui.View):
         return True
 
 
-    # ========================================================
-    # CHANNEL SELECT
-    #
-    # IMPORTANT:
-    # discord.py uses @discord.ui.select()
-    # with cls=discord.ui.ChannelSelect.
-    # ========================================================
-
-    @discord.ui.select(
-        cls=discord.ui.ChannelSelect,
-        placeholder="Choose the daily song channel...",
-        channel_types=[
-            discord.ChannelType.text
-        ],
-        min_values=1,
-        max_values=1
-    )
-    async def channel_select(
+    async def channel_selected(
         self,
-        interaction: discord.Interaction,
-        select: discord.ui.ChannelSelect
+        interaction: discord.Interaction
     ):
 
-        self.selected_channel = (
-            select.values[0]
-        )
+        try:
 
-        await interaction.response.send_message(
-            (
-                f"✅ Selected "
-                f"{self.selected_channel.mention}!"
-            ),
-            ephemeral=True
-        )
+            self.selected_channel = (
+                self.channel_select.values[0]
+            )
 
+            await interaction.response.send_message(
+                (
+                    f"✅ Selected "
+                    f"{self.selected_channel.mention}!"
+                ),
+                ephemeral=True
+            )
 
-    # ========================================================
-    # SAVE BUTTON
-    # ========================================================
+        except Exception as error:
+
+            print(
+                f"[ERROR] Channel selector failed: "
+                f"{error}"
+            )
+
+            if not interaction.response.is_done():
+
+                await interaction.response.send_message(
+                    (
+                        "❌ Something went wrong "
+                        "selecting that channel."
+                    ),
+                    ephemeral=True
+                )
+
 
     @discord.ui.button(
         label="Save Setup",
@@ -768,106 +723,157 @@ class SetupView(discord.ui.View):
         button: discord.ui.Button
     ):
 
-        if self.selected_channel is None:
+        try:
 
-            await interaction.response.send_message(
-                "❌ Choose a channel first!",
-                ephemeral=True
+            if self.selected_channel is None:
+
+                await interaction.response.send_message(
+                    "❌ Choose a channel first!",
+                    ephemeral=True
+                )
+
+                return
+
+            guild = interaction.guild
+
+            if guild is None:
+
+                await interaction.response.send_message(
+                    (
+                        "❌ This only works "
+                        "inside a server."
+                    ),
+                    ephemeral=True
+                )
+
+                return
+
+            channel = self.selected_channel
+
+            if not isinstance(
+                channel,
+                discord.TextChannel
+            ):
+
+                await interaction.response.send_message(
+                    (
+                        "❌ Please select a normal "
+                        "text channel."
+                    ),
+                    ephemeral=True
+                )
+
+                return
+
+            me = guild.me
+
+            if me is None:
+
+                await interaction.response.send_message(
+                    (
+                        "❌ I couldn't check "
+                        "my permissions."
+                    ),
+                    ephemeral=True
+                )
+
+                return
+
+            permissions = channel.permissions_for(
+                me
             )
 
-            return
+            if not permissions.view_channel:
 
-        guild = interaction.guild
+                await interaction.response.send_message(
+                    (
+                        "❌ I can't view "
+                        "that channel."
+                    ),
+                    ephemeral=True
+                )
 
-        if guild is None:
+                return
 
-            await interaction.response.send_message(
-                (
-                    "❌ This can only be used "
-                    "inside a server."
+            if not permissions.send_messages:
+
+                await interaction.response.send_message(
+                    (
+                        "❌ I can't send messages "
+                        "in that channel."
+                    ),
+                    ephemeral=True
+                )
+
+                return
+
+            if not permissions.embed_links:
+
+                await interaction.response.send_message(
+                    (
+                        "❌ I need the "
+                        "**Embed Links** permission "
+                        "in that channel."
+                    ),
+                    ephemeral=True
+                )
+
+                return
+
+            # Save the selected channel.
+            set_guild_channel(
+                guild.id,
+                channel.id
+            )
+
+            # Respond immediately.
+            await interaction.response.edit_message(
+                content=(
+                    "✅ **Setup complete!**\n\n"
+                    f"I'll post one random Spotify "
+                    f"song per calendar day in "
+                    f"{channel.mention}."
                 ),
-                ephemeral=True
+                embed=None,
+                view=None
             )
 
-            return
+            self.stop()
 
-        channel = self.selected_channel
-
-        me = guild.me
-
-        if me is None:
-
-            await interaction.response.send_message(
-                (
-                    "❌ I couldn't check my "
-                    "permissions."
-                ),
-                ephemeral=True
+            print(
+                f"[INFO] Daily song channel set to "
+                f"#{channel.name} "
+                f"for guild {guild.id}"
             )
 
-            return
+        except Exception as error:
 
-        permissions = channel.permissions_for(
-            me
-        )
-
-        if not permissions.view_channel:
-
-            await interaction.response.send_message(
-                (
-                    "❌ I can't view that channel."
-                ),
-                ephemeral=True
+            print(
+                f"[ERROR] Save Setup failed: "
+                f"{error}"
             )
 
-            return
+            if not interaction.response.is_done():
 
-        if not permissions.send_messages:
+                try:
 
-            await interaction.response.send_message(
-                (
-                    "❌ I can't send messages "
-                    "in that channel."
-                ),
-                ephemeral=True
-            )
+                    await interaction.response.send_message(
+                        (
+                            "❌ Something went wrong "
+                            "while saving the setup. "
+                            "Check the Railway logs."
+                        ),
+                        ephemeral=True
+                    )
 
-            return
+                except Exception as response_error:
 
-        if not permissions.embed_links:
+                    print(
+                        f"[ERROR] Could not send "
+                        f"error response: "
+                        f"{response_error}"
+                    )
 
-            await interaction.response.send_message(
-                (
-                    "❌ I need the **Embed Links** "
-                    "permission in that channel."
-                ),
-                ephemeral=True
-            )
-
-            return
-
-        set_guild_channel(
-            guild_id=guild.id,
-            channel_id=channel.id
-        )
-
-        await interaction.response.edit_message(
-            content=(
-                "✅ **Setup complete!**\n\n"
-                f"I'll post one random Spotify "
-                f"song per calendar day in "
-                f"{channel.mention}."
-            ),
-            embed=None,
-            view=None
-        )
-
-        self.stop()
-
-
-    # ========================================================
-    # CANCEL BUTTON
-    # ========================================================
 
     @discord.ui.button(
         label="Cancel",
@@ -880,13 +886,21 @@ class SetupView(discord.ui.View):
         button: discord.ui.Button
     ):
 
-        await interaction.response.edit_message(
-            content="❌ Setup cancelled.",
-            embed=None,
-            view=None
-        )
+        try:
 
-        self.stop()
+            await interaction.response.edit_message(
+                content="❌ Setup cancelled.",
+                embed=None,
+                view=None
+            )
+
+            self.stop()
+
+        except Exception as error:
+
+            print(
+                f"[ERROR] Cancel failed: {error}"
+            )
 
 
 # ============================================================
@@ -954,13 +968,11 @@ async def setup(
                 inline=False
             )
 
-    view = SetupView(
-        interaction.user.id
-    )
-
     await interaction.response.send_message(
         embed=embed,
-        view=view,
+        view=SetupView(
+            interaction.user.id
+        ),
         ephemeral=True
     )
 
@@ -1018,41 +1030,27 @@ async def test(
     )
 
     success = await send_song_to_guild(
-        guild_id=interaction.guild.id,
+        interaction.guild.id,
         force=True
     )
 
     if success:
 
-        channel = (
-            interaction.guild.get_channel(
-                settings["channel_id"]
-            )
+        await interaction.followup.send(
+            "✅ Song sent!",
+            ephemeral=True
         )
-
-        if channel:
-
-            message = (
-                f"✅ Song sent to "
-                f"{channel.mention}!"
-            )
-
-        else:
-
-            message = "✅ Song sent!"
 
     else:
 
-        message = (
-            "❌ I couldn't send the song. "
-            "Check my permissions and "
-            "Spotify configuration."
+        await interaction.followup.send(
+            (
+                "❌ I couldn't send the song. "
+                "Check the Railway logs, Spotify "
+                "credentials, and channel permissions."
+            ),
+            ephemeral=True
         )
-
-    await interaction.followup.send(
-        message,
-        ephemeral=True
-    )
 
 
 # ============================================================
@@ -1107,8 +1105,8 @@ async def status(
 
         await interaction.response.send_message(
             (
-                "⚠️ The configured channel no "
-                "longer exists.\n"
+                "⚠️ The configured channel "
+                "no longer exists.\n"
                 "Run `/setup` again."
             ),
             ephemeral=True
@@ -1116,17 +1114,15 @@ async def status(
 
         return
 
-    last_song = (
-        settings["last_sent_date"]
-        or "None yet"
-    )
-
     await interaction.response.send_message(
         (
             "🎵 **Daily Song Status**\n\n"
             f"📢 Channel: {channel.mention}\n"
-            f"📅 Last song: **{last_song}**\n"
-            "🔄 Frequency: **Once per calendar day**"
+            f"📅 Last song: "
+            f"**{settings['last_sent_date'] or 'None yet'}**\n"
+            "🔄 Frequency: "
+            "**Once per calendar day**\n"
+            "🌍 Calendar: **UTC**"
         ),
         ephemeral=True
     )
@@ -1164,15 +1160,14 @@ async def disable(
 
         return
 
-    settings = get_guild_settings(
+    if not get_guild_settings(
         interaction.guild.id
-    )
-
-    if not settings:
+    ):
 
         await interaction.response.send_message(
             (
-                "ℹ️ Daily songs are already disabled."
+                "ℹ️ Daily songs are "
+                "already disabled."
             ),
             ephemeral=True
         )
@@ -1184,9 +1179,7 @@ async def disable(
     )
 
     await interaction.response.send_message(
-        (
-            "✅ Daily songs have been disabled."
-        ),
+        "✅ Daily songs have been disabled.",
         ephemeral=True
     )
 
@@ -1244,89 +1237,7 @@ async def on_ready():
 
 
 # ============================================================
-# ERROR HANDLING
-# ============================================================
-
-@setup.error
-async def setup_error(
-    interaction: discord.Interaction,
-    error
-):
-
-    if isinstance(
-        error,
-        app_commands.errors.MissingPermissions
-    ):
-
-        await interaction.response.send_message(
-            (
-                "❌ You need the "
-                "**Manage Server** permission."
-            ),
-            ephemeral=True
-        )
-
-        return
-
-    print(
-        f"[ERROR] /setup: {error}"
-    )
-
-
-@test.error
-async def test_error(
-    interaction: discord.Interaction,
-    error
-):
-
-    if isinstance(
-        error,
-        app_commands.errors.MissingPermissions
-    ):
-
-        await interaction.response.send_message(
-            (
-                "❌ You need the "
-                "**Manage Server** permission."
-            ),
-            ephemeral=True
-        )
-
-        return
-
-    print(
-        f"[ERROR] /test: {error}"
-    )
-
-
-@disable.error
-async def disable_error(
-    interaction: discord.Interaction,
-    error
-):
-
-    if isinstance(
-        error,
-        app_commands.errors.MissingPermissions
-    ):
-
-        await interaction.response.send_message(
-            (
-                "❌ You need the "
-                "**Manage Server** permission."
-            ),
-            ephemeral=True
-        )
-
-        return
-
-    print(
-        f"[ERROR] /disable: {error}"
-    )
-
-
-# ============================================================
-# START
+# START BOT
 # ============================================================
 
 bot.run(DISCORD_TOKEN)
