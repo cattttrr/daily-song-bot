@@ -4,49 +4,37 @@ import random
 import sqlite3
 import asyncio
 from datetime import datetime, timezone
-
 import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
-
 # ============================================================
 # CONFIG
 # ============================================================
-
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
 SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
-
 SPOTIFY_MARKET = os.getenv("SPOTIFY_MARKET", "PL")
-
 DATA_DIR = os.getenv("DATA_DIR", "/app/data")
 DATABASE_PATH = os.path.join(DATA_DIR, "bot.db")
 
-
 if not DISCORD_TOKEN:
     raise RuntimeError("Missing DISCORD_TOKEN")
-
 if not SPOTIFY_CLIENT_ID:
     raise RuntimeError("Missing SPOTIFY_CLIENT_ID")
-
 if not SPOTIFY_CLIENT_SECRET:
     raise RuntimeError("Missing SPOTIFY_CLIENT_SECRET")
 
-
 os.makedirs(DATA_DIR, exist_ok=True)
-
 
 # ============================================================
 # DATABASE
 # ============================================================
-
 def get_db():
     db = sqlite3.connect(DATABASE_PATH)
     db.row_factory = sqlite3.Row
     return db
-
 
 def initialize_database():
     with get_db() as db:
@@ -60,7 +48,6 @@ def initialize_database():
         """)
         db.commit()
 
-
 def set_guild_channel(guild_id: int, channel_id: int):
     with get_db() as db:
         db.execute("""
@@ -72,7 +59,6 @@ def set_guild_channel(guild_id: int, channel_id: int):
         """, (guild_id, channel_id))
         db.commit()
 
-
 def get_guild_settings(guild_id: int):
     with get_db() as db:
         return db.execute("""
@@ -81,14 +67,12 @@ def get_guild_settings(guild_id: int):
             WHERE guild_id = ?
         """, (guild_id,)).fetchone()
 
-
 def get_all_guild_settings():
     with get_db() as db:
         return db.execute("""
             SELECT *
             FROM guild_settings
         """).fetchall()
-
 
 def mark_song_sent(
     guild_id: int,
@@ -108,7 +92,6 @@ def mark_song_sent(
         ))
         db.commit()
 
-
 def remove_guild(guild_id: int):
     with get_db() as db:
         db.execute("""
@@ -117,38 +100,29 @@ def remove_guild(guild_id: int):
         """, (guild_id,))
         db.commit()
 
-
 initialize_database()
-
 
 # ============================================================
 # DATE
 # ============================================================
-
 def get_today():
     # The calendar day is based on UTC.
     return datetime.now(
         timezone.utc
     ).strftime("%Y-%m-%d")
 
-
 # ============================================================
 # SPOTIFY
 # ============================================================
-
 class SpotifyClient:
-
     def __init__(self):
         self.access_token = None
         self.expires_at = 0
 
-
     async def get_access_token(self):
-
         now = datetime.now(
             timezone.utc
         ).timestamp()
-
         if (
             self.access_token
             and now < self.expires_at - 60
@@ -159,7 +133,6 @@ class SpotifyClient:
             f"{SPOTIFY_CLIENT_ID}:"
             f"{SPOTIFY_CLIENT_SECRET}"
         )
-
         encoded = base64.b64encode(
             credentials.encode("utf-8")
         ).decode("utf-8")
@@ -172,7 +145,6 @@ class SpotifyClient:
         }
 
         async with aiohttp.ClientSession() as session:
-
             async with session.post(
                 "https://accounts.spotify.com/api/token",
                 headers=headers,
@@ -180,41 +152,31 @@ class SpotifyClient:
                     "grant_type": "client_credentials"
                 }
             ) as response:
-
                 if response.status != 200:
-
                     text = await response.text()
-
                     raise RuntimeError(
                         "Spotify authentication failed: "
                         f"{response.status} {text}"
                     )
-
                 result = await response.json()
 
         self.access_token = result["access_token"]
-
         self.expires_at = (
             now + result["expires_in"]
         )
-
         return self.access_token
-
 
     async def search_tracks(
         self,
         query: str,
         offset: int = 0
     ):
-
         token = await self.get_access_token()
-
         headers = {
             "Authorization": (
                 f"Bearer {token}"
             )
         }
-
         params = {
             "q": query,
             "type": "track",
@@ -224,58 +186,43 @@ class SpotifyClient:
         }
 
         async with aiohttp.ClientSession() as session:
-
             async with session.get(
                 "https://api.spotify.com/v1/search",
                 headers=headers,
                 params=params
             ) as response:
-
                 if response.status == 401:
-
                     self.access_token = None
                     self.expires_at = 0
-
                     token = await self.get_access_token()
-
                     headers["Authorization"] = (
                         f"Bearer {token}"
                     )
-
                     async with session.get(
                         "https://api.spotify.com/v1/search",
                         headers=headers,
                         params=params
                     ) as retry:
-
                         if retry.status != 200:
-
                             text = await retry.text()
-
                             raise RuntimeError(
                                 "Spotify search failed: "
                                 f"{retry.status} {text}"
                             )
-
                         return await retry.json()
 
                 if response.status != 200:
-
                     text = await response.text()
-
                     raise RuntimeError(
                         "Spotify search failed: "
                         f"{response.status} {text}"
                     )
-
                 return await response.json()
-
 
     async def get_random_song(
         self,
         previous_track_id=None
     ):
-
         queries = [
             "a",
             "e",
@@ -298,26 +245,22 @@ class SpotifyClient:
             "blue",
             "music"
         ]
-
         query = random.choice(queries)
 
         first = await self.search_tracks(
             query,
             0
         )
-
         tracks_info = first.get(
             "tracks",
             {}
         )
-
         total = tracks_info.get(
             "total",
             0
         )
 
         if total <= 0:
-
             raise RuntimeError(
                 "Spotify returned no tracks."
             )
@@ -326,7 +269,6 @@ class SpotifyClient:
             total - 1,
             1000
         )
-
         offset = random.randint(
             0,
             max_offset
@@ -336,7 +278,6 @@ class SpotifyClient:
             query,
             offset
         )
-
         tracks = result.get(
             "tracks",
             {}
@@ -356,51 +297,40 @@ class SpotifyClient:
         ]
 
         if previous_track_id:
-
             different = [
                 track
                 for track in tracks
                 if track["id"] != previous_track_id
             ]
-
             if different:
                 tracks = different
 
         if not tracks:
-
             raise RuntimeError(
                 "Spotify returned no usable tracks."
             )
 
         return random.choice(tracks)
 
-
 spotify = SpotifyClient()
-
 
 # ============================================================
 # DISCORD BOT
 # ============================================================
-
 intents = discord.Intents.default()
-
 bot = commands.Bot(
     command_prefix="!",
     intents=intents
 )
 
-
 # ============================================================
 # SONG EMBED
 # ============================================================
-
 def create_song_embed(track):
-
     name = track.get(
         "name",
         "Unknown song"
     )
-
     artists = ", ".join(
         artist.get(
             "name",
@@ -411,17 +341,14 @@ def create_song_embed(track):
             []
         )
     )
-
     album = track.get(
         "album",
         {}
     )
-
     album_name = album.get(
         "name",
         "Unknown album"
     )
-
     spotify_url = (
         track
         .get(
@@ -448,9 +375,7 @@ def create_song_embed(track):
         "images",
         []
     )
-
     if images:
-
         embed.set_thumbnail(
             url=images[0]["url"]
         )
@@ -458,49 +383,37 @@ def create_song_embed(track):
     embed.set_footer(
         text="Random song selected from Spotify"
     )
-
     return embed
-
 
 # ============================================================
 # SEND SONG
 # ============================================================
-
 async def send_song_to_guild(
     guild_id: int,
     force: bool = False
 ):
-
     settings = get_guild_settings(
         guild_id
     )
-
     if not settings:
         return False
 
     channel_id = settings[
         "channel_id"
     ]
-
     channel = bot.get_channel(
         channel_id
     )
-
     if channel is None:
-
         try:
-
             channel = await bot.fetch_channel(
                 channel_id
             )
-
         except discord.DiscordException as error:
-
             print(
                 f"[ERROR] Could not find channel "
                 f"{channel_id}: {error}"
             )
-
             return False
 
     today = get_today()
@@ -510,19 +423,15 @@ async def send_song_to_guild(
         not force
         and settings["last_sent_date"] == today
     ):
-
         return False
 
     try:
-
         track = await spotify.get_random_song(
             settings["last_track_id"]
         )
-
         embed = create_song_embed(
             track
         )
-
         await channel.send(
             content="🎶 **Today's random song!**",
             embed=embed
@@ -535,99 +444,72 @@ async def send_song_to_guild(
             today,
             track["id"]
         )
-
         print(
             f"[INFO] Sent '{track['name']}' "
             f"to guild {guild_id} "
             f"on {today}"
         )
-
         return True
-
     except discord.Forbidden:
-
         print(
             f"[ERROR] Missing permission to send "
             f"in channel {channel_id}"
         )
-
     except discord.HTTPException as error:
-
         print(
             f"[ERROR] Discord error for guild "
             f"{guild_id}: {error}"
         )
-
     except Exception as error:
-
         print(
             f"[ERROR] Failed to send song for guild "
             f"{guild_id}: {error}"
         )
-
     return False
-
 
 # ============================================================
 # DAILY CHECKER
 # ============================================================
-
 @tasks.loop(minutes=1)
 async def daily_checker():
-
     settings_list = get_all_guild_settings()
-
     if not settings_list:
         return
 
     for settings in settings_list:
-
         guild_id = settings[
             "guild_id"
         ]
-
         if (
             settings["last_sent_date"]
             == get_today()
         ):
             continue
-
         try:
-
             await send_song_to_guild(
                 guild_id
             )
-
         except Exception as error:
-
             print(
                 f"[ERROR] Daily checker: {error}"
             )
-
         await asyncio.sleep(1)
-
 
 @daily_checker.before_loop
 async def before_daily_checker():
-
     await bot.wait_until_ready()
-
 
 # ============================================================
 # SETUP VIEW
 # ============================================================
-
 class SetupView(discord.ui.View):
-
     def __init__(
         self,
         author_id: int
     ):
-
         super().__init__(
             timeout=180
         )
-
         self.author_id = author_id
         self.selected_channel = None
 
@@ -642,26 +524,21 @@ class SetupView(discord.ui.View):
             min_values=1,
             max_values=1
         )
-
         self.channel_select.callback = (
             self.channel_selected
         )
-
         self.add_item(
             self.channel_select
         )
-
 
     async def interaction_check(
         self,
         interaction: discord.Interaction
     ):
-
         if (
             interaction.user.id
             != self.author_id
         ):
-
             await interaction.response.send_message(
                 (
                     "❌ Only the person who started "
@@ -669,23 +546,17 @@ class SetupView(discord.ui.View):
                 ),
                 ephemeral=True
             )
-
             return False
-
         return True
-
 
     async def channel_selected(
         self,
         interaction: discord.Interaction
     ):
-
         try:
-
             self.selected_channel = (
                 self.channel_select.values[0]
             )
-
             await interaction.response.send_message(
                 (
                     f"✅ Selected "
@@ -693,16 +564,12 @@ class SetupView(discord.ui.View):
                 ),
                 ephemeral=True
             )
-
         except Exception as error:
-
             print(
                 f"[ERROR] Channel selector failed: "
                 f"{error}"
             )
-
             if not interaction.response.is_done():
-
                 await interaction.response.send_message(
                     (
                         "❌ Something went wrong "
@@ -710,7 +577,6 @@ class SetupView(discord.ui.View):
                     ),
                     ephemeral=True
                 )
-
 
     @discord.ui.button(
         label="Save Setup",
@@ -722,22 +588,16 @@ class SetupView(discord.ui.View):
         interaction: discord.Interaction,
         button: discord.ui.Button
     ):
-
         try:
-
             if self.selected_channel is None:
-
                 await interaction.response.send_message(
                     "❌ Choose a channel first!",
                     ephemeral=True
                 )
-
                 return
 
             guild = interaction.guild
-
             if guild is None:
-
                 await interaction.response.send_message(
                     (
                         "❌ This only works "
@@ -745,46 +605,35 @@ class SetupView(discord.ui.View):
                     ),
                     ephemeral=True
                 )
-
                 return
 
-            channel = self.selected_channel
+            # ChannelSelect returns AppCommandChannel → fetch the real channel
+            selected = self.selected_channel
+            channel = guild.get_channel(selected.id)
+            if channel is None:
+                try:
+                    channel = await guild.fetch_channel(selected.id)
+                except discord.DiscordException:
+                    channel = None
 
-            if not isinstance(
-                channel,
-                discord.TextChannel
-            ):
-
+            if not isinstance(channel, discord.TextChannel):
                 await interaction.response.send_message(
-                    (
-                        "❌ Please select a normal "
-                        "text channel."
-                    ),
+                    "❌ Please select a normal text channel.",
                     ephemeral=True
                 )
-
                 return
 
             me = guild.me
-
             if me is None:
-
                 await interaction.response.send_message(
-                    (
-                        "❌ I couldn't check "
-                        "my permissions."
-                    ),
+                    "❌ I couldn't check my permissions.",
                     ephemeral=True
                 )
-
                 return
 
-            permissions = channel.permissions_for(
-                me
-            )
+            permissions = channel.permissions_for(me)
 
             if not permissions.view_channel:
-
                 await interaction.response.send_message(
                     (
                         "❌ I can't view "
@@ -792,11 +641,8 @@ class SetupView(discord.ui.View):
                     ),
                     ephemeral=True
                 )
-
                 return
-
             if not permissions.send_messages:
-
                 await interaction.response.send_message(
                     (
                         "❌ I can't send messages "
@@ -804,11 +650,8 @@ class SetupView(discord.ui.View):
                     ),
                     ephemeral=True
                 )
-
                 return
-
             if not permissions.embed_links:
-
                 await interaction.response.send_message(
                     (
                         "❌ I need the "
@@ -817,7 +660,6 @@ class SetupView(discord.ui.View):
                     ),
                     ephemeral=True
                 )
-
                 return
 
             # Save the selected channel.
@@ -837,26 +679,19 @@ class SetupView(discord.ui.View):
                 embed=None,
                 view=None
             )
-
             self.stop()
-
             print(
                 f"[INFO] Daily song channel set to "
                 f"#{channel.name} "
                 f"for guild {guild.id}"
             )
-
         except Exception as error:
-
             print(
                 f"[ERROR] Save Setup failed: "
                 f"{error}"
             )
-
             if not interaction.response.is_done():
-
                 try:
-
                     await interaction.response.send_message(
                         (
                             "❌ Something went wrong "
@@ -865,15 +700,12 @@ class SetupView(discord.ui.View):
                         ),
                         ephemeral=True
                     )
-
                 except Exception as response_error:
-
                     print(
                         f"[ERROR] Could not send "
                         f"error response: "
                         f"{response_error}"
                     )
-
 
     @discord.ui.button(
         label="Cancel",
@@ -885,28 +717,21 @@ class SetupView(discord.ui.View):
         interaction: discord.Interaction,
         button: discord.ui.Button
     ):
-
         try:
-
             await interaction.response.edit_message(
                 content="❌ Setup cancelled.",
                 embed=None,
                 view=None
             )
-
             self.stop()
-
         except Exception as error:
-
             print(
                 f"[ERROR] Cancel failed: {error}"
             )
 
-
 # ============================================================
 # /SETUP
 # ============================================================
-
 @bot.tree.command(
     name="setup",
     description=(
@@ -923,9 +748,7 @@ class SetupView(discord.ui.View):
 async def setup(
     interaction: discord.Interaction
 ):
-
     if interaction.guild is None:
-
         await interaction.response.send_message(
             (
                 "❌ This command only works "
@@ -933,7 +756,6 @@ async def setup(
             ),
             ephemeral=True
         )
-
         return
 
     embed = discord.Embed(
@@ -951,17 +773,13 @@ async def setup(
     current = get_guild_settings(
         interaction.guild.id
     )
-
     if current:
-
         channel = (
             interaction.guild.get_channel(
                 current["channel_id"]
             )
         )
-
         if channel:
-
             embed.add_field(
                 name="Current channel",
                 value=channel.mention,
@@ -976,11 +794,9 @@ async def setup(
         ephemeral=True
     )
 
-
 # ============================================================
 # /TEST
 # ============================================================
-
 @bot.tree.command(
     name="test",
     description=(
@@ -996,9 +812,7 @@ async def setup(
 async def test(
     interaction: discord.Interaction
 ):
-
     if interaction.guild is None:
-
         await interaction.response.send_message(
             (
                 "❌ This command only works "
@@ -1006,15 +820,12 @@ async def test(
             ),
             ephemeral=True
         )
-
         return
 
     settings = get_guild_settings(
         interaction.guild.id
     )
-
     if not settings:
-
         await interaction.response.send_message(
             (
                 "❌ This server isn't configured yet.\n"
@@ -1022,7 +833,6 @@ async def test(
             ),
             ephemeral=True
         )
-
         return
 
     await interaction.response.defer(
@@ -1035,14 +845,11 @@ async def test(
     )
 
     if success:
-
         await interaction.followup.send(
             "✅ Song sent!",
             ephemeral=True
         )
-
     else:
-
         await interaction.followup.send(
             (
                 "❌ I couldn't send the song. "
@@ -1052,11 +859,9 @@ async def test(
             ephemeral=True
         )
 
-
 # ============================================================
 # /STATUS
 # ============================================================
-
 @bot.tree.command(
     name="status",
     description=(
@@ -1066,9 +871,7 @@ async def test(
 async def status(
     interaction: discord.Interaction
 ):
-
     if interaction.guild is None:
-
         await interaction.response.send_message(
             (
                 "❌ This command only works "
@@ -1076,15 +879,12 @@ async def status(
             ),
             ephemeral=True
         )
-
         return
 
     settings = get_guild_settings(
         interaction.guild.id
     )
-
     if not settings:
-
         await interaction.response.send_message(
             (
                 "❌ Daily songs are not configured.\n"
@@ -1092,7 +892,6 @@ async def status(
             ),
             ephemeral=True
         )
-
         return
 
     channel = (
@@ -1100,9 +899,7 @@ async def status(
             settings["channel_id"]
         )
     )
-
     if channel is None:
-
         await interaction.response.send_message(
             (
                 "⚠️ The configured channel "
@@ -1111,7 +908,6 @@ async def status(
             ),
             ephemeral=True
         )
-
         return
 
     await interaction.response.send_message(
@@ -1127,11 +923,9 @@ async def status(
         ephemeral=True
     )
 
-
 # ============================================================
 # /DISABLE
 # ============================================================
-
 @bot.tree.command(
     name="disable",
     description=(
@@ -1147,9 +941,7 @@ async def status(
 async def disable(
     interaction: discord.Interaction
 ):
-
     if interaction.guild is None:
-
         await interaction.response.send_message(
             (
                 "❌ This command only works "
@@ -1157,13 +949,11 @@ async def disable(
             ),
             ephemeral=True
         )
-
         return
 
     if not get_guild_settings(
         interaction.guild.id
     ):
-
         await interaction.response.send_message(
             (
                 "ℹ️ Daily songs are "
@@ -1171,73 +961,56 @@ async def disable(
             ),
             ephemeral=True
         )
-
         return
 
     remove_guild(
         interaction.guild.id
     )
-
     await interaction.response.send_message(
         "✅ Daily songs have been disabled.",
         ephemeral=True
     )
 
-
 # ============================================================
 # BOT READY
 # ============================================================
-
 @bot.event
 async def on_ready():
-
     print(
         "===================================="
     )
-
     print(
         f"Logged in as: {bot.user}"
     )
-
     print(
         f"Bot ID: {bot.user.id}"
     )
-
     print(
         f"Database: {DATABASE_PATH}"
     )
-
     print(
         "Frequency: Once per calendar day"
     )
-
     print(
         "===================================="
     )
 
     try:
-
         synced = await bot.tree.sync()
-
         print(
             f"[INFO] Synced "
             f"{len(synced)} slash commands."
         )
-
     except Exception as error:
-
         print(
             f"[ERROR] Slash command sync failed: "
             f"{error}"
         )
 
     if not daily_checker.is_running():
-
         daily_checker.start()
-
 
 # ============================================================
 # START BOT
 # ============================================================
-
 bot.run(DISCORD_TOKEN)
