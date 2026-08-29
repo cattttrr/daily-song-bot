@@ -47,6 +47,7 @@ if not SPOTIFY_CLIENT_SECRET:
 # ============================================================
 
 intents = discord.Intents.default()
+intents.message_content = True  # recommended (enable it also in the Developer Portal)
 
 bot = commands.Bot(
     command_prefix="!",
@@ -331,21 +332,15 @@ def create_song_embed(track):
 async def randomsong(
     interaction: discord.Interaction
 ):
+    # Must be the first thing – protects against the 3-second timeout
+    await interaction.response.defer()
 
     if interaction.guild is None:
-
-        await interaction.response.send_message(
-            (
-                "❌ This command can only "
-                "be used in a server."
-            ),
+        await interaction.followup.send(
+            "❌ This command can only be used in a server.",
             ephemeral=True
         )
-
         return
-
-    # Tell Discord we're processing the request.
-    await interaction.response.defer()
 
     try:
 
