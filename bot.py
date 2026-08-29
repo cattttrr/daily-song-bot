@@ -9,28 +9,37 @@ from discord.ext import commands
 
 
 # ============================================================
-# RAILWAY VARIABLES
+# CONFIGURATION
 # ============================================================
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID")
 SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
 
+# Optional Spotify market.
+# PL = Poland
+# You can change this in Railway if you want.
 SPOTIFY_MARKET = os.getenv("SPOTIFY_MARKET", "PL")
 
 
 # ============================================================
-# CHECK VARIABLES
+# CHECK RAILWAY VARIABLES
 # ============================================================
 
 if not DISCORD_TOKEN:
-    raise RuntimeError("Missing DISCORD_TOKEN")
+    raise RuntimeError(
+        "DISCORD_TOKEN is missing from Railway Variables."
+    )
 
 if not SPOTIFY_CLIENT_ID:
-    raise RuntimeError("Missing SPOTIFY_CLIENT_ID")
+    raise RuntimeError(
+        "SPOTIFY_CLIENT_ID is missing from Railway Variables."
+    )
 
 if not SPOTIFY_CLIENT_SECRET:
-    raise RuntimeError("Missing SPOTIFY_CLIENT_SECRET")
+    raise RuntimeError(
+        "SPOTIFY_CLIENT_SECRET is missing from Railway Variables."
+    )
 
 
 # ============================================================
@@ -46,7 +55,7 @@ bot = commands.Bot(
 
 
 # ============================================================
-# SPOTIFY
+# GET SPOTIFY ACCESS TOKEN
 # ============================================================
 
 async def get_spotify_token():
@@ -61,8 +70,12 @@ async def get_spotify_token():
     ).decode("utf-8")
 
     headers = {
-        "Authorization": f"Basic {encoded_credentials}",
-        "Content-Type": "application/x-www-form-urlencoded"
+        "Authorization": (
+            f"Basic {encoded_credentials}"
+        ),
+        "Content-Type": (
+            "application/x-www-form-urlencoded"
+        )
     }
 
     data = {
@@ -77,26 +90,49 @@ async def get_spotify_token():
             data=data
         ) as response:
 
+            response_text = await response.text()
+
             if response.status != 200:
 
-                text = await response.text()
+                print(
+                    "[ERROR] Spotify authentication failed:"
+                )
+
+                print(
+                    f"Status: {response.status}"
+                )
+
+                print(
+                    f"Response: {response_text}"
+                )
 
                 raise RuntimeError(
-                    f"Spotify login failed: "
-                    f"{response.status} {text}"
+                    "Spotify authentication failed."
                 )
 
             result = await response.json()
 
-            return result["access_token"]
+            token = result.get(
+                "access_token"
+            )
 
+            if not token:
+
+                raise RuntimeError(
+                    "Spotify did not provide an access token."
+                )
+
+            return token
+
+
+# ============================================================
+# GET RANDOM SONG FROM SPOTIFY
+# ============================================================
 
 async def get_random_song():
 
     token = await get_spotify_token()
 
-    # Random search words.
-    # This gives Spotify many different possible results.
     search_words = [
         "a",
         "e",
@@ -122,22 +158,32 @@ async def get_random_song():
         "dance",
         "sky",
         "moon",
-        "light"
+        "light",
+        "happy",
+        "sad",
+        "rock",
+        "pop",
+        "party"
     ]
 
-    query = random.choice(search_words)
+    query = random.choice(
+        search_words
+    )
 
     headers = {
-        "Authorization": f"Bearer {token}"
+        "Authorization": (
+            f"Bearer {token}"
+        )
     }
 
-    # Spotify allows up to 50 results per search.
+    # Spotify search supports a maximum
+    # of 10 results per request.
     params = {
         "q": query,
         "type": "track",
         "market": SPOTIFY_MARKET,
-        "limit": 50,
-        "offset": random.randint(0, 950)
+        "limit": 10,
+        "offset": random.randint(0, 100)
     }
 
     async with aiohttp.ClientSession() as session:
@@ -148,44 +194,57 @@ async def get_random_song():
             params=params
         ) as response:
 
+            response_text = await response.text()
+
             if response.status != 200:
 
-                text = await response.text()
+                print(
+                    "[ERROR] Spotify search failed:"
+                )
+
+                print(
+                    f"Status: {response.status}"
+                )
+
+                print(
+                    f"Response: {response_text}"
+                )
 
                 raise RuntimeError(
-                    f"Spotify search failed: "
-                    f"{response.status} {text}"
+                    "Spotify search failed."
                 )
 
             data = await response.json()
 
-    tracks = data.get(
-        "tracks",
-        {}
-    ).get(
-        "items",
-        []
+    tracks = (
+        data
+        .get("tracks", {})
+        .get("items", [])
     )
 
-    # Remove invalid/local tracks.
     tracks = [
         track
         for track in tracks
         if track.get("id")
-        and not track.get("is_local", False)
+        and not track.get(
+            "is_local",
+            False
+        )
     ]
 
     if not tracks:
 
         raise RuntimeError(
-            "Spotify didn't return any songs."
+            "Spotify returned no songs."
         )
 
-    return random.choice(tracks)
+    return random.choice(
+        tracks
+    )
 
 
 # ============================================================
-# CREATE DISCORD EMBED
+# CREATE SONG EMBED
 # ============================================================
 
 def create_song_embed(track):
@@ -220,8 +279,13 @@ def create_song_embed(track):
 
     spotify_url = (
         track
-        .get("external_urls", {})
-        .get("spotify")
+        .get(
+            "external_urls",
+            {}
+        )
+        .get(
+            "spotify"
+        )
     )
 
     embed = discord.Embed(
@@ -230,7 +294,8 @@ def create_song_embed(track):
             f"## {song_name}\n"
             f"**{artist_names}**\n\n"
             f"💿 Album: **{album_name}**\n\n"
-            f"🎧 [Listen on Spotify]({spotify_url})"
+            f"🎧 [Listen on Spotify]"
+            f"({spotify_url})"
         )
     )
 
@@ -258,56 +323,83 @@ def create_song_embed(track):
 
 @bot.tree.command(
     name="randomsong",
-    description="Post a random Spotify song in this channel."
+    description=(
+        "Post a random Spotify song "
+        "in this channel."
+    )
 )
 async def randomsong(
     interaction: discord.Interaction
 ):
 
-    # This command only works in a server channel.
     if interaction.guild is None:
 
         await interaction.response.send_message(
-            "❌ This command can only be used in a server.",
+            (
+                "❌ This command can only "
+                "be used in a server."
+            ),
             ephemeral=True
         )
 
         return
 
-    # Let Discord know we're working.
+    # Tell Discord we're processing the request.
     await interaction.response.defer()
 
     try:
 
-        # Get random Spotify track.
+        print(
+            f"[INFO] /randomsong used by "
+            f"{interaction.user} "
+            f"in #{interaction.channel}"
+        )
+
+        # Get a random Spotify song.
         track = await get_random_song()
 
-        # Make the Discord embed.
-        embed = create_song_embed(track)
+        # Create the Discord embed.
+        embed = create_song_embed(
+            track
+        )
 
-        # Send it to the channel where
-        # /randomsong was used.
+        # Send the song in the SAME channel
+        # where /randomsong was used.
         await interaction.followup.send(
-            "🎶 **Here's your random song!**",
+            content=(
+                "🎶 **Here's your random song!**"
+            ),
             embed=embed
         )
 
         print(
-            f"[INFO] Sent random song: "
-            f"{track.get('name', 'Unknown')}"
+            f"[INFO] Successfully sent: "
+            f"{track.get('name', 'Unknown Song')}"
         )
 
     except Exception as error:
 
         print(
-            f"[ERROR] /randomsong failed: {error}"
+            "===================================="
+        )
+
+        print(
+            "[ERROR] /randomsong failed:"
+        )
+
+        print(
+            repr(error)
+        )
+
+        print(
+            "===================================="
         )
 
         await interaction.followup.send(
             (
-                "❌ I couldn't get a song from Spotify.\n"
-                "Check the Spotify Client ID and "
-                "Client Secret in Railway."
+                "❌ I couldn't get a song from Spotify.\n\n"
+                "Check the Railway logs for the "
+                "exact Spotify error."
             ),
             ephemeral=True
         )
@@ -325,15 +417,19 @@ async def on_ready():
     )
 
     print(
+        "       RANDOM SONG BOT ONLINE"
+    )
+
+    print(
+        "===================================="
+    )
+
+    print(
         f"Logged in as: {bot.user}"
     )
 
     print(
         f"Bot ID: {bot.user.id}"
-    )
-
-    print(
-        "===================================="
     )
 
     try:
@@ -348,12 +444,22 @@ async def on_ready():
     except Exception as error:
 
         print(
-            f"[ERROR] Command sync failed: {error}"
+            "[ERROR] Failed to sync slash commands:"
         )
 
+        print(
+            repr(error)
+        )
+
+    print(
+        "===================================="
+    )
+
 
 # ============================================================
-# START
+# START BOT
 # ============================================================
 
-bot.run(DISCORD_TOKEN)
+bot.run(
+    DISCORD_TOKEN
+)
