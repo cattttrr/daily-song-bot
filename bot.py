@@ -47,7 +47,6 @@ if not SPOTIFY_CLIENT_SECRET:
 # ============================================================
 
 intents = discord.Intents.default()
-intents.message_content = True  # recommended (enable it also in the Developer Portal)
 
 bot = commands.Bot(
     command_prefix="!",
